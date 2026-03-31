@@ -8,12 +8,12 @@ from flask_jwt_extended import (
     jwt_required,
     get_jwt_identity,
     set_access_cookies,
+    unset_jwt_cookies
 )
 from bson import ObjectId
 import certifi
 import os
 from dotenv import load_dotenv
-from flask_jwt_extended import unset_jwt_cookies
 import json
 
 app = Flask(__name__)
@@ -34,7 +34,6 @@ jwt = JWTManager(app)
 bcrypt = Bcrypt(app)
 
 # MONGODB SETUP
-
 load_dotenv()
 mongo_connection = os.environ.get("mongo_connection")
 mongodb = MongoClient(mongo_connection, tlsCAFile=certifi.where())
@@ -44,26 +43,25 @@ messages = db["messages"]
 users = db["users"]
 forms = db["forms"]
 
-# ROUTES
-
+# ---------------- ROUTES ---------------- #
 
 @app.route("/")
 def home():
     return "API running"
 
 
-# REGISTER ENDPOINT
+# REGISTER
 @app.route("/register", methods=["POST"])
 def register():
     data = request.json
 
     if not data or "email" not in data or "password" not in data or "organization" not in data:
         return jsonify({"error": "Email, password, and organization required"}), 400
+
     email = data["email"].strip().lower()
     password = data["password"]
     organization = data["organization"].strip().lower()
 
-    # Check if user already exists
     if users.find_one({"email": email}):
         return jsonify({"error": "User already exists"}), 400
 
@@ -79,22 +77,18 @@ def register():
         "role": "admin"
     })
 
-    return jsonify({
-        "msg": "User created",
-        "email": email,
-        "Organization": organization
-    }), 201
+    return jsonify({"msg": "User created"}), 201
 
 
-# LOGIN ENDPOINT
+# LOGIN
 @app.route("/login", methods=["POST"])
 def login():
     data = request.json
 
     if not data or "email" not in data or "password" not in data:
         return jsonify({"error": "Email and password required"}), 400
-    email = data["email"].strip().lower()
 
+    email = data["email"].strip().lower()
     user = users.find_one({"email": email})
 
     if not user or not bcrypt.check_password_hash(user["password"], data["password"]):
@@ -111,11 +105,11 @@ def login():
     return response
 
 
-# PROTECTED ROUTE
+# DASHBOARD
 @app.route("/dashboard")
 @jwt_required()
 def dashboard():
-    identity = get_jwt_identity()
+    identity = json.loads(get_jwt_identity())
 
     user = users.find_one({"_id": ObjectId(identity["user_id"])})
 
@@ -128,39 +122,13 @@ def dashboard():
     })
 
 
-# EXISTING/TEST ROUTES
-@app.route("/submit", methods=["POST"])
-@jwt_required()
-def submit_text():
-    data = request.json
-    identity = get_jwt_identity()
-
-    if not data or "text" not in data:
-        return jsonify({"error": "No text provided"}), 400
-
-    messages.insert_one({
-        "text": data["text"],
-        "organization": identity["organization"]
-    })
-
-    return jsonify({"message": "Saved successfully!"})
-
-
-@app.route("/test-db")
-def test_db():
-    try:
-        mongodb.admin.command("ping")
-        return jsonify({"status": "Connected to MongoDB"})
-    except Exception as e:
-        return jsonify({"status": "Connection failed", "error": str(e)})
-
-
+# SUBMIT FORM
 @app.route("/submit-form", methods=["POST"])
 @jwt_required()
 def submit_form():
     try:
         data = request.json
-        identity = get_jwt_identity()
+        identity = json.loads(get_jwt_identity())
 
         if not data or "answers" not in data:
             return jsonify({"error": "Invalid form submission"}), 400
@@ -178,11 +146,13 @@ def submit_form():
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
+
+# GET FORMS
 @app.route("/forms", methods=["GET"])
 @jwt_required()
 def get_forms():
     try:
-        identity = json.loads(get_jwt_identity())  # parse the JSON string back to dict
+        identity = json.loads(get_jwt_identity())
         org_name = identity["organization"]
 
         org_forms = list(forms.find({
@@ -197,17 +167,47 @@ def get_forms():
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
+
+@app.route("/forms/<id>", methods=["PUT"])
+@jwt_required()
+def update_form(id):
+    try:
+        data = request.json
+        identity = json.loads(get_jwt_identity())
+        org_name = identity["organization"]
+
+        formId = data.get("formId")
+        answers = data.get("answers", {})  
+
+        result = forms.update_one(
+            {"_id": ObjectId(id), "organization": org_name},
+            {"$set": {"formId": formId, "answers": answers}}
+        )
+
+        if result.matched_count == 0:
+            return jsonify({"error": "Form not found"}), 404
+
+        return jsonify({"message": "Updated successfully"}), 200
+
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+# CHECK AUTH
 @app.route("/check-auth", methods=["GET"])
 @jwt_required()
 def check_auth():
-    user_id = get_jwt_identity()
-    return jsonify({"logged_in": True, "user_id": user_id}), 200
+    return jsonify({"logged_in": True}), 200
 
+
+# LOGOUT
 @app.route("/logout", methods=["POST"])
 def logout():
     response = jsonify({"msg": "Logout successful"})
     unset_jwt_cookies(response)
     return response
 
+
 if __name__ == "__main__":
     app.run(debug=True)
+
