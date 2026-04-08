@@ -37,7 +37,7 @@ mongodb = MongoClient(mongo_connection, tlsCAFile=certifi.where())
 db = mongodb["FormBuilderDB"]
 messages = db["messages"]
 users = db["users"]
-forms = db["forms"]
+form_submissions = db["form-submissions"]
 built_forms = db["built-forms"]
 
 # ---------------- ROUTES ---------------- #
@@ -146,7 +146,7 @@ def submit_form():
             "organization": identity["organization"],
         }
 
-        forms.insert_one(document)
+        form_submissions.insert_one(document)
 
         return jsonify({"message": "Form submitted successfully"}), 200
 
@@ -155,14 +155,17 @@ def submit_form():
 
 
 # GET FORM SUBMISSIONS
-@app.route("/forms", methods=["GET"])
+@app.route("/form-submissions", methods=["GET"])
 @jwt_required()
-def get_forms():
+def get_form_submissions():
     try:
         identity = json.loads(get_jwt_identity())
         org_name = identity["organization"]
 
         org_forms = list(forms.find({"organization": org_name}))
+        org_forms = list(form_submissions.find({
+            "organization": org_name
+        }))
 
         for form in org_forms:
             form["_id"] = str(form["_id"])
@@ -173,9 +176,9 @@ def get_forms():
         return jsonify({"error": str(e)}), 500
 
 
-@app.route("/forms/<id>", methods=["PUT"])
+@app.route("/form-submissions/<id>", methods=["PUT"])
 @jwt_required()
-def update_form(id):
+def update_form_submission(id):
     try:
         data = request.json
         identity = json.loads(get_jwt_identity())
@@ -184,7 +187,7 @@ def update_form(id):
         formId = data.get("formId")
         responses = data.get("responses", {})
 
-        result = forms.update_one(
+        result = form_submissions.update_one(
             {"_id": ObjectId(id), "organization": org_name},
             {"$set": {"formId": formId, "responses": responses}},
         )
